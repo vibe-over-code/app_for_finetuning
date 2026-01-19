@@ -7,14 +7,19 @@ import json
 import gc
 from datetime import datetime
 from transformers import (
-    AutoModelForCausalLM, 
-    AutoTokenizer, 
-    TrainingArguments, 
-    Trainer, 
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    TrainingArguments,
+    Trainer,
     DataCollatorForLanguageModeling,
-    BitsAndBytesConfig
+    BitsAndBytesConfig,
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import (
+    LoraConfig,
+    get_peft_model,
+    prepare_model_for_kbit_training,
+    PeftModel,
+)
 from datasets import load_dataset
 from memory_estimator import (
     estimate_model_memory,
@@ -100,6 +105,8 @@ def train_model(
     logging_steps=10,
     use_gradient_checkpointing=True,
     use_8bit_optimizer=True,
+    adapter_path=None,
+    resume_from_checkpoint=None,
     progress_callback=None
 ):
     """
@@ -110,7 +117,7 @@ def train_model(
         dataset_path: Путь к датасету JSONL
         output_dir: Директория для сохранения (если None, создается автоматически)
         max_length: Максимальная длина последовательности
-        quantization_bits: Битность квантования (4 или 8)
+        quantization_bits: Битность квантования (4, 8 или None для без квантования)
         use_double_quant: Использовать двойное квантование
         batch_size: Размер батча
         gradient_accumulation_steps: Шаги накопления градиентов
@@ -123,6 +130,8 @@ def train_model(
         logging_steps: Шаги логирования
         use_gradient_checkpointing: Использовать gradient checkpointing
         use_8bit_optimizer: Использовать 8-bit оптимизатор
+        adapter_path: Путь к существующему LoRA-адаптеру (для дообучения)
+        resume_from_checkpoint: Путь к чекпоинту Trainer (для возобновления обучения)
         progress_callback: Функция для обратного вызова прогресса
     
     Returns:
@@ -214,19 +223,26 @@ def train_model(
         if quantization_bits in [4, 8] and bnb_config is not None:
             model = prepare_model_for_kbit_training(model)
         
-        # Настройка LoRA
-        target_modules = get_target_modules(model_name)
-        
-        lora_config = LoraConfig(
-            r=lora_r,
-            lora_alpha=lora_alpha,
-            target_modules=target_modules,
-            lora_dropout=lora_dropout,
-            bias="none",
-            task_type="CAUSAL_LM"
-        )
-        
-        model = get_peft_model(model, lora_config)
+        # Настройка / загрузка LoRA
+        if adapter_path and os.path.isdir(adapter_path):
+            # Дообучение существующего адаптера
+            if progress_callback:
+                progress_callback(f"📥 Загрузка существующего адаптера: {adapter_path}")
+            model = PeftModel.from_pretrained(model, adapter_path)
+        else:
+            # Создание нового адаптера
+            target_modules = get_target_modules(model_name)
+
+            lora_config = LoraConfig(
+                r=lora_r,
+                lora_alpha=lora_alpha,
+                target_modules=target_modules,
+                lora_dropout=lora_dropout,
+                bias="none",
+                task_type="CAUSAL_LM",
+            )
+
+            model = get_peft_model(model, lora_config)
         
         if progress_callback:
             model.print_trainable_parameters()
@@ -311,10 +327,13 @@ def train_model(
         
         if progress_callback:
             progress_callback("🛠 Начинаем процесс дообучения...")
-        
+
         # Обучение с обработкой ошибок памяти
         try:
-            trainer.train()
+            if resume_from_checkpoint:
+                trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+            else:
+                trainer.train()
         except torch.cuda.OutOfMemoryError as e:
             gc.collect()
             torch.cuda.empty_cache()
@@ -327,16 +346,22 @@ def train_model(
         # Сохранение адаптера
         if progress_callback:
             progress_callback(f"💾 Сохранение модели в {output_dir}...")
-        
-        adapter_path = os.path.join(output_dir, "lora_adapter")
-        trainer.model.save_pretrained(adapter_path)
+
+        # Если дообучали существующий адаптер — сохраняем в него же,
+        # иначе создаём новую папку lora_adapter внутри output_dir
+        if adapter_path and os.path.isdir(adapter_path):
+            save_adapter_path = adapter_path
+        else:
+            save_adapter_path = os.path.join(output_dir, "lora_adapter")
+
+        trainer.model.save_pretrained(save_adapter_path)
         tokenizer.save_pretrained(output_dir)
         
         result = {
             'success': True,
             'output_dir': output_dir,
-            'adapter_path': adapter_path,
-            'message': f"✅ Готово! Адаптер сохранен в {adapter_path}"
+            'adapter_path': save_adapter_path,
+            'message': f"✅ Готово! Адаптер сохранен в {save_adapter_path}"
         }
         
         if progress_callback:
