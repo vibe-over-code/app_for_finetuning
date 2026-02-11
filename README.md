@@ -1,115 +1,115 @@
 # Fine-Tuning Assistant
 
-Визуальное приложение для дообучения языковых моделей с использованием LoRA и BitsAndBytes квантования.
+Visual application for fine-tuning language models using LoRA and BitsAndBytes quantization.
 
-## Возможности
+## Possibilities
 
-- 🎨 **Визуальный интерфейс** - удобный веб-интерфейс на Gradio
-- 🤗 **Поддержка HuggingFace** - загрузка моделей напрямую с HuggingFace Hub
-- 📊 **Оценка памяти** - предсказание требований к памяти перед запуском обучения
-- 🔧 **Квантование** - поддержка 4-bit и 8-bit квантования через BitsAndBytes
-- 🛡️ **Обработка ошибок** - автоматическая обработка ошибок памяти с рекомендациями
-- 📁 **Формат датасета** - поддержка JSONL формата с полями `instruction` и `output`
+- 🎨 **Visual interface** - convenient web-interface built on Gradio
+- 🤗 **HuggingFace support** - load models directly from the HuggingFace Hub
+- 📊 **Memory estimation** - predict memory requirements before starting training
+- 🔧 **Quantization** - support for 4-bit and 8-bit quantization via BitsAndBytes
+- 🛡️ **Error handling** - automatic memory error handling with recommendations
+- 📁 **Dataset format** - support for JSONL format with `instruction` and `output` fields
 
-## Установка
+## Installation
 
-1. Установите зависимости:
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Убедитесь, что у вас установлен CUDA и PyTorch с поддержкой GPU.
+2. Ensure that you have CUDA and PyTorch with GPU support installed.
 
-## Использование
+## Usage
 
-### Запуск приложения
+### Starting the app
 
 ```bash
 python app.py
 ```
 
-Приложение откроется в браузере по адресу `http://localhost:7860`
+The application will open in your browser at `http://localhost:7860`
 
-### Формат датасета
+### Dataset format
 
-Датасет должен быть в формате JSONL (JSON Lines), где каждая строка - это JSON объект:
+The dataset must be in JSONL (JSON Lines) format, where each line is a JSON object:
 
 ```json
-{"instruction": "Вопрос пользователя", "input": "", "output": "Ответ модели"}
+{"instruction": "User question", "input": "", "output": "Model answer"}
 ```
 
-Пример:
+Example:
 ```json
-{"instruction": "Что такое капитализм?", "input": "", "output": "Капитализм - это экономическая система..."}
+{"instruction": "What is capitalism?", "input": "", "output": "Capitalism is an economic system..."}
 ```
 
-### Параметры обучения
+### Training parameters
 
-- **Модель**: Имя модели с HuggingFace (например, `Qwen/Qwen2.5-7B-Instruct`) или путь к локальной модели
-- **Датасет**: Загрузите файл в формате JSONL
-- **Квантование**: Выберите 4-bit (рекомендуется), 8-bit или без квантования
-- **Batch Size**: Размер батча (обычно 1 для больших моделей)
-- **Gradient Accumulation**: Количество шагов накопления градиентов
-- **LoRA параметры**: Rank (r), Alpha, Dropout
+- **Model**: Model name from HuggingFace (e.g., `Qwen/Qwen2.5-7B-Instruct`) or a path to a local model
+- **Dataset**: Upload a file in JSONL format
+- **Quantization**: Select 4-bit (recommended), 8-bit, or no quantization
+- **Batch Size**: Batch size (usually 1 for large models)
+- **Gradient Accumulation**: Number of gradient accumulation steps
+- **LoRA parameters**: Rank (r), Alpha, Dropout
 
-### Оценка памяти
+### Memory Estimation
 
-Перед запуском обучения используйте вкладку "Оценка памяти" для проверки достаточности VRAM. Приложение автоматически оценит:
-- Память модели
-- Память для активаций
-- Память для градиентов
-- Память для оптимизатора
-- Общую требуемую память
+Before starting training, use the "Memory Estimation" tab to check VRAM sufficiency. The application will automatically estimate:
+- Model memory
+- Activation memory
+- Gradient memory
+- Optimizer memory
+- Total required memory
 
-### Обработка ошибок памяти
+### Memory Error Handling
 
-Приложение автоматически обрабатывает ошибки памяти и предоставляет рекомендации:
-- Уменьшить batch_size
-- Увеличить gradient_accumulation_steps
-- Уменьшить max_length
-- Использовать квантование
+The application automatically handles memory errors and provides recommendations:
+- Decrease `batch_size`
+- Increase `gradient_accumulation_steps`
+- Decrease `max_length`
+- Use quantization
 
-## Структура проекта
+## Project Structure
 
-- `app.py` - Основное приложение с GUI
-- `trainer_module.py` - Модуль для обучения модели
-- `memory_estimator.py` - Модуль для оценки памяти
-- `train.py` - Оригинальный скрипт обучения (сохранен для совместимости)
-- `requirements.txt` - Зависимости проекта
+- `app.py` - Main application with GUI
+- `trainer_module.py` - Module for model training
+- `memory_estimator.py` - Module for memory estimation
+- `train.py` - Original training script (kept for compatibility)
+- `requirements.txt` - Project dependencies
 
-## Примеры использования
+## Usage Examples
 
-### Обучение модели Qwen
+### Training a Qwen model
 
-1. Запустите `python app.py`
-2. В поле "Имя модели" введите `Qwen/Qwen2.5-7B-Instruct`
-3. Загрузите ваш датасет в формате JSONL
-4. Выберите параметры обучения
-5. Нажмите "Оценить память" для проверки
-6. Нажмите "Начать обучение"
+1. Run `python app.py`
+2. In the "Model Name" field, enter `Qwen/Qwen2.5-7B-Instruct`
+3. Upload your dataset in JSONL format
+4. Select training parameters
+5. Click "Estimate Memory" to check
+6. Click "Start Training"
 
-### Использование локальной модели
+### Using a local model
 
-Вместо HuggingFace ID можно указать путь к локальной модели:
+Instead of a HuggingFace ID, you can specify the path to a local model:
 ```
 ./my-local-model
 ```
 
-## Требования
+## Requirements
 
 - Python 3.8+
-- CUDA-совместимая GPU (рекомендуется минимум 8GB VRAM)
-- PyTorch с поддержкой CUDA
+- CUDA-compatible GPU (minimum 8GB VRAM recommended)
+- PyTorch with CUDA support
 
-## Поддерживаемые модели
+## Supported Models
 
-Приложение поддерживает любые модели на базе Transformers, включая:
+The application supports any models based on Transformers, including:
 - Qwen/Qwen2.5
 - Llama 2/3
 - Mistral
 - Phi
-- И другие модели с архитектурой Transformer
+- And other models with Transformer architecture
 
-## Лицензия
+## License
 
 MIT
