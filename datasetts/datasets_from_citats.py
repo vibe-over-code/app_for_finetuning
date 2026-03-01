@@ -5,9 +5,9 @@ import uuid
 from requests import post
 
 # --- КОНФИГУРАЦИЯ ---
-API_KEY = "ftH40nqIasXUPPKYgWINxwdoEWQarNZ0" 
+API_KEY = "" 
 INPUT_FILE = "dataset1.txt"
-OUTPUT_FILE = "johnny_expanded_dataset.jsonl"
+OUTPUT_FILE = "expanded_dataset.jsonl"
 URL = "https://api.mistral.ai/v1/chat/completions"
 MODEL = "mistral-large-latest"
 
