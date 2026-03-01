@@ -2,11 +2,14 @@ import json
 import time
 import re
 from requests import post
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 # --- КОНФИГУРАЦИЯ ---
-API_KEY = "7xMTOT8C4GNXwTEUB2TQT8jJQYaxKMsg"  # Вставьте ваш ключ
+API_KEY = os.getenv("KEY")
 INPUT_FILE = "mk.txt"
-OUTPUT_FILE = "marx_dataset.jsonl"
+OUTPUT_FILE = "mx_dataset.jsonl"
 URL = "https://api.mistral.ai/v1/chat/completions"
 MODEL = "mistral-large-latest" # Лучшая модель для сложной логики
 
