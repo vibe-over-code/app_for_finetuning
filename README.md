@@ -110,6 +110,20 @@ The application supports any models based on Transformers, including:
 - Phi
 - And other models with Transformer architecture
 
+## How to Convert and Quantize to GGUF
+
+1. **Setup:** Clone and build the `llama.cpp` repository.
+2. **Merge:** Run merge script (e.g., `1_merge.py`) to combine the base model and the adapter into the `merged_model_hf` folder.
+3. **Prepare:** Move the `merged_model_hf` folder into the `llama.cpp` directory.
+4. **Convert:** Transform the Hugging Face model into FP16 GGUF format:
+   ```bash
+   python convert_hf_to_gguf.py merged_model_hf --outfile model.f16.gguf --outtype f16
+5. **Quantize:** Compress the model to your desired format (e.g., Q4_K_M):
+    ```bash
+    ./llama-quantize model.f16.gguf model.Q4_K_M.gguf Q4_K_M
+6. **Cleanup:** You can remove the intermediate model.f16.gguf and the merged_model_hf folder to free up disk space.
+
+
 ## License
 
 MIT

@@ -4,7 +4,7 @@ from peft import PeftModel
 import gc
 
 base_model_id = "Qwen/Qwen2.5-7B-Instruct" # Берется из кеша HF
-adapter_path = "Qwen2.5-7B-Instruct-165929/lora_adapter"  # Твоя папка с адаптером
+adapter_path = "Qwen2.5-7B-Instruct-012940/lora_adapter"  # Твоя папка с адаптером
 save_path = "merged_model_hf"                # Сюда сохранится результат
 
 print("1. Загрузка токенизатора...")
