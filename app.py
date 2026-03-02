@@ -5,6 +5,11 @@ import gradio as gr
 import os
 import json
 import threading
+import subprocess
+import shutil
+import sys
+import gc
+from pathlib import Path
 from trainer_module import train_model
 from memory_estimator import (
     estimate_model_memory,
@@ -23,6 +28,8 @@ training_status = {"running": False, "result": None}
 
 # Кэш для инференса
 inference_cache = {}
+
+PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 def estimate_memory_requirements(
@@ -284,6 +291,191 @@ def check_status():
             return f"❌ {result.get('message', 'Ошибка при обучении')}"
     else:
         return "⏸ Ожидание запуска..."
+
+
+def resolve_llama_cpp_dir(llama_cpp_path):
+    """Возвращает директорию llama.cpp с fallback на корень текущего репозитория."""
+    raw_path = llama_cpp_path.strip() if isinstance(llama_cpp_path, str) else ""
+    if raw_path:
+        candidate = Path(raw_path).expanduser()
+        if candidate.exists() and candidate.is_dir():
+            return candidate.resolve(), None
+        return PROJECT_ROOT, (
+            f"⚠️ Путь llama.cpp не найден: {raw_path}\n"
+            f"Использую fallback: {PROJECT_ROOT}"
+        )
+
+    return PROJECT_ROOT, f"ℹ️ Путь llama.cpp не указан. Использую: {PROJECT_ROOT}"
+
+
+def find_quantize_binary(llama_dir):
+    """Ищет бинарник квантования llama.cpp в типичных путях."""
+    candidates = [
+        llama_dir / "llama-quantize.exe",
+        llama_dir / "llama-quantize",
+        llama_dir / "quantize.exe",
+        llama_dir / "quantize",
+        llama_dir / "build" / "bin" / "llama-quantize.exe",
+        llama_dir / "build" / "bin" / "llama-quantize",
+        llama_dir / "build" / "bin" / "quantize.exe",
+        llama_dir / "build" / "bin" / "quantize",
+    ]
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
+def run_command(command, cwd):
+    """Запускает команду и возвращает (успех, лог)."""
+    process = subprocess.run(
+        command,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+    )
+    command_line = " ".join(str(part) for part in command)
+    log = f"$ {command_line}\n{process.stdout}"
+    if process.stderr:
+        log += f"\n[stderr]\n{process.stderr}"
+    return process.returncode == 0, log.strip()
+
+
+def merge_and_build_gguf(
+    base_model_id,
+    adapter_path,
+    llama_cpp_path,
+    quantization_type,
+    merged_folder_name,
+    fp16_filename,
+    quantized_filename,
+):
+    """Полный пайплайн: merge LoRA -> convert в f16 GGUF -> quantize."""
+    if not base_model_id or not str(base_model_id).strip():
+        return "❌ Укажите базовую модель (HF ID или локальный путь)."
+
+    adapter_path = adapter_path.strip() if isinstance(adapter_path, str) else ""
+    if not adapter_path:
+        return "❌ Укажите путь к LoRA-адаптеру."
+    if not os.path.isdir(adapter_path):
+        return f"❌ Папка адаптера не найдена: {adapter_path}"
+
+    merged_folder_name = (
+        merged_folder_name.strip()
+        if isinstance(merged_folder_name, str) and merged_folder_name.strip()
+        else "merged_model_hf"
+    )
+    fp16_filename = (
+        fp16_filename.strip()
+        if isinstance(fp16_filename, str) and fp16_filename.strip()
+        else "model.f16.gguf"
+    )
+    quantized_filename = (
+        quantized_filename.strip()
+        if isinstance(quantized_filename, str) and quantized_filename.strip()
+        else f"model.{quantization_type}.gguf"
+    )
+
+    llama_dir, fallback_message = resolve_llama_cpp_dir(llama_cpp_path)
+    convert_script = llama_dir / "convert_hf_to_gguf.py"
+    if not convert_script.exists():
+        return (
+            f"❌ Не найден convert_hf_to_gguf.py в: {llama_dir}\n"
+            "Проверьте путь к папке llama.cpp."
+        )
+
+    quantize_bin = find_quantize_binary(llama_dir)
+    if not quantize_bin:
+        return (
+            f"❌ Не найден бинарник квантования (llama-quantize/quantize) в: {llama_dir}\n"
+            "Соберите llama.cpp перед запуском."
+        )
+
+    merged_dir = llama_dir / merged_folder_name
+    fp16_path = llama_dir / fp16_filename
+    quantized_path = llama_dir / quantized_filename
+
+    logs = []
+    if fallback_message:
+        logs.append(fallback_message)
+    logs.append(f"📁 Рабочая директория llama.cpp: {llama_dir}")
+    logs.append(f"📁 Папка merged модели: {merged_dir}")
+    logs.append(f"📄 FP16 GGUF: {fp16_path}")
+    logs.append(f"📄 Квантованный GGUF: {quantized_path}")
+    logs.append(f"🛠 Квантайзер: {quantize_bin}")
+
+    base_model = None
+    model = None
+    merged_model = None
+
+    try:
+        logs.append("\n[1/3] Загрузка токенизатора...")
+        tokenizer = AutoTokenizer.from_pretrained(base_model_id, trust_remote_code=True)
+
+        logs.append("[1/3] Загрузка базовой модели на CPU...")
+        base_model = AutoModelForCausalLM.from_pretrained(
+            base_model_id,
+            torch_dtype=torch.bfloat16,
+            device_map="cpu",
+            low_cpu_mem_usage=True,
+            trust_remote_code=True,
+        )
+
+        logs.append("[1/3] Применение LoRA-адаптера...")
+        model = PeftModel.from_pretrained(base_model, adapter_path)
+
+        logs.append("[1/3] Слияние весов (merge_and_unload)...")
+        merged_model = model.merge_and_unload()
+
+        if merged_dir.exists():
+            shutil.rmtree(merged_dir)
+
+        logs.append("[1/3] Сохранение merged модели в корень llama.cpp...")
+        merged_model.save_pretrained(merged_dir, safe_serialization=True)
+        tokenizer.save_pretrained(merged_dir)
+
+        logs.append("\n[2/3] Конвертация HF -> FP16 GGUF...")
+        convert_ok, convert_log = run_command(
+            [
+                sys.executable,
+                str(convert_script),
+                str(merged_dir),
+                "--outfile",
+                str(fp16_path),
+                "--outtype",
+                "f16",
+            ],
+            cwd=llama_dir,
+        )
+        logs.append(convert_log)
+        if not convert_ok:
+            logs.append("❌ Ошибка на этапе конвертации в GGUF.")
+            return "\n\n".join(logs)
+
+        logs.append(f"\n[3/3] Квантование в {quantization_type}...")
+        quant_ok, quant_log = run_command(
+            [
+                str(quantize_bin),
+                str(fp16_path),
+                str(quantized_path),
+                quantization_type,
+            ],
+            cwd=llama_dir,
+        )
+        logs.append(quant_log)
+        if not quant_ok:
+            logs.append("❌ Ошибка на этапе квантования.")
+            return "\n\n".join(logs)
+
+        logs.append("\n✅ Готово: merge + convert + quantize завершены успешно.")
+        return "\n\n".join(logs)
+
+    except Exception as e:
+        logs.append(f"\n❌ Ошибка пайплайна: {e}")
+        return "\n\n".join(logs)
+    finally:
+        del base_model, model, merged_model
+        gc.collect()
 
 
 # Создание интерфейса
@@ -576,6 +768,71 @@ with gr.Blocks() as app:
                     temperature_infer,
                 ],
                 outputs=output_infer,
+            )
+
+        with gr.TabItem("🧩 Merge + GGUF"):
+            gr.Markdown("### Merge LoRA и сборка GGUF в папке llama.cpp")
+            gr.Markdown(
+                "Укажите путь к llama.cpp. Если поле пустое или путь неверный, будет использован корень текущего репозитория."
+            )
+
+            with gr.Row():
+                with gr.Column():
+                    merge_base_model = gr.Textbox(
+                        label="Базовая модель (HF ID или локальный путь)",
+                        value="Qwen/Qwen2.5-7B-Instruct",
+                    )
+                    merge_adapter_path = gr.Textbox(
+                        label="Путь к LoRA-адаптеру",
+                        value="./qwen-marx-003721/lora_adapter",
+                    )
+                    llama_cpp_path = gr.Textbox(
+                        label="Путь к папке llama.cpp (опционально)",
+                        value="",
+                        placeholder="Например: D:/llama.cpp",
+                    )
+                    quantization_type = gr.Dropdown(
+                        label="Квантование GGUF",
+                        choices=["Q4_K_M", "Q5_K_M", "Q8_0", "Q6_K", "Q4_0", "Q4_K_S"],
+                        value="Q4_K_M",
+                    )
+
+                with gr.Column():
+                    merged_folder_name = gr.Textbox(
+                        label="Имя папки merged модели (в корне llama.cpp)",
+                        value="merged_model_hf",
+                    )
+                    fp16_filename = gr.Textbox(
+                        label="Имя FP16 GGUF файла",
+                        value="model.f16.gguf",
+                    )
+                    quantized_filename = gr.Textbox(
+                        label="Имя квантованного GGUF файла",
+                        value="",
+                        placeholder="Оставьте пустым для авто-имени: model.<quant>.gguf",
+                    )
+                    build_gguf_btn = gr.Button("Запустить merge + GGUF", variant="primary")
+
+            merge_log = gr.Textbox(
+                label="Лог пайплайна",
+                lines=20,
+                max_lines=60,
+                interactive=False,
+                value="Ожидание запуска...",
+            )
+
+            build_gguf_btn.click(
+                fn=merge_and_build_gguf,
+                inputs=[
+                    merge_base_model,
+                    merge_adapter_path,
+                    llama_cpp_path,
+                    quantization_type,
+                    merged_folder_name,
+                    fp16_filename,
+                    quantized_filename,
+                ],
+                outputs=merge_log,
             )
 
 
